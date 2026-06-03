@@ -3,6 +3,8 @@ from app.database import get_supabase
 from app.models.job import JobCreate, JobUpdate, JobResponse, JobWithMatch
 from app.routers.profiles import get_current_user_id
 from app.services.cv_parser import extract_keywords
+from app.services.video_processor import trim_video_to_duration
+from thefuzz import fuzz
 from typing import Literal
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
@@ -35,6 +37,7 @@ async def create_job(
         "industry": job.industry,
         "experience_level": job.experience_level,
         "salary_range": job.salary_range,
+        "youtube_url": job.youtube_url,
     }
     
     result = db.table("jobs").insert(data).execute()
@@ -52,19 +55,21 @@ async def list_jobs(
     job_type: Literal["Full time", "Part time", "Casual", "Volunteer"] | None = None,
     experience_level: Literal["Entry", "Mid", "Expert"] | None = None,
     industry: str | None = None,
+    salary_range: str | None = None,
     search: str | None = None,
     limit: int = Query(default=50, le=100),
 ):
     """
-    List all active jobs with optional filters.
-    Returns jobs with employer company name.
+    List all active jobs with optional filters + fuzzy keyword search.
+    Fuzzy search handles typos and approximate matches (e.g. 'sofware enginer').
     """
     db = get_supabase()
-    
+
     query = db.table("jobs").select(
         "*, profiles!jobs_employer_id_fkey(company_name)"
     ).eq("is_active", True)
-    
+
+    # Hard DB filters
     if location:
         query = query.ilike("location", f"%{location}%")
     if mode:
@@ -75,19 +80,41 @@ async def list_jobs(
         query = query.eq("experience_level", experience_level)
     if industry:
         query = query.ilike("industry", f"%{industry}%")
-    if search:
-        query = query.or_(f"title.ilike.%{search}%,description.ilike.%{search}%")
-    
-    result = query.order("created_at", desc=True).limit(limit).execute()
-    
-    # Flatten the nested profile data
+    if salary_range:
+        query = query.ilike("salary_range", f"%{salary_range}%")
+
+    result = query.order("created_at", desc=True).limit(200).execute()
+
     jobs = []
     for job in result.data or []:
         profile_data = job.pop("profiles", {}) or {}
         job["company_name"] = profile_data.get("company_name")
         jobs.append(job)
-    
-    return jobs
+
+    # Fuzzy keyword search (Python-side after DB fetch)
+    if search:
+        search_lower = search.lower()
+
+        def fuzzy_score(job: dict) -> int:
+            targets = [
+                job.get("title") or "",
+                job.get("description") or "",
+                job.get("company_name") or "",
+                job.get("industry") or "",
+                job.get("location") or "",
+                " ".join(job.get("keywords") or []),
+            ]
+            combined = " ".join(targets)
+            # Use partial_ratio so "engineer" matches "software engineer"
+            return fuzz.partial_ratio(search_lower, combined.lower())
+
+        scored = [(job, fuzzy_score(job)) for job in jobs]
+        # Threshold 50 — tolerates typos but filters noise
+        scored = [(j, s) for j, s in scored if s >= 50]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        jobs = [j for j, _ in scored]
+
+    return jobs[:limit]
 
 
 @router.get("/{job_id}", response_model=JobWithMatch)
@@ -171,7 +198,7 @@ async def upload_job_video(
     file: UploadFile = File(...),
     user_id: str = Depends(get_current_user_id)
 ):
-    """Upload a video for a job posting."""
+    """Upload a video for a job posting. Video is trimmed to first 30 seconds."""
     db = get_supabase()
     
     # Verify ownership
@@ -188,17 +215,23 @@ async def upload_job_video(
     
     content = await file.read()
     
-    # Limit file size (50MB)
-    if len(content) > 50 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large (max 50MB)")
+    # Limit file size (100MB for upload, will be trimmed)
+    if len(content) > 100 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 100MB)")
+    
+    # Trim video to first 30 seconds
+    try:
+        trimmed_content = trim_video_to_duration(content, max_duration=30)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Video processing failed: {str(e)}")
     
     storage_path = f"{job_id}/video.mp4"
     
     try:
         db.storage.from_("videos").upload(
             storage_path,
-            content,
-            {"content-type": file.content_type, "upsert": "true"}
+            trimmed_content,
+            {"content-type": "video/mp4", "upsert": "true"}
         )
         
         # Get public URL
@@ -207,7 +240,7 @@ async def upload_job_video(
         # Update job with video URL
         db.table("jobs").update({"video_url": video_url}).eq("id", job_id).execute()
         
-        return {"message": "Video uploaded", "video_url": video_url}
+        return {"message": "Video uploaded (trimmed to 30s)", "video_url": video_url}
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Upload failed: {str(e)}")

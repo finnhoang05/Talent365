@@ -9,3 +9,6 @@ python-jose[cryptography]==3.3.0
 pdfplumber==0.11.0
 scikit-learn==1.5.0
 numpy==1.26.4
+moviepy==1.0.3
+thefuzz==0.22.1
+python-Levenshtein==0.25.1

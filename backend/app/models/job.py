@@ -15,7 +15,7 @@ class JobBase(BaseModel):
 
 
 class JobCreate(JobBase):
-    pass
+    youtube_url: str | None = None  # Link to full YouTube video
 
 
 class JobUpdate(BaseModel):
@@ -27,6 +27,7 @@ class JobUpdate(BaseModel):
     industry: str | None = None
     experience_level: Literal["Entry", "Mid", "Expert"] | None = None
     salary_range: str | None = None
+    youtube_url: str | None = None
     is_active: bool | None = None
 
 
@@ -34,7 +35,8 @@ class JobResponse(JobBase):
     id: str
     employer_id: str
     keywords: list[str] | None = None
-    video_url: str | None = None
+    video_url: str | None = None      # Short uploaded video (max 30s)
+    youtube_url: str | None = None    # Link to full YouTube video
     is_active: bool
     created_at: datetime
 

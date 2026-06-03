@@ -12,6 +12,10 @@ def calculate_match_score(
     Calculate match score between a candidate and a job using TF-IDF cosine similarity.
     Returns a score from 0 to 100.
     """
+    # Guard against None values from DB nulls
+    cv_keywords = cv_keywords or []
+    job_keywords = job_keywords or []
+
     # Build combined text representations
     candidate_text = f"{cv_text} {' '.join(cv_keywords)}"
     job_text = f"{job_description} {' '.join(job_keywords)}"
@@ -33,8 +37,8 @@ def calculate_match_score(
         score = float(similarity[0][0]) * 100
         
         # Boost score if there are direct keyword matches
-        cv_keywords_lower = set(k.lower() for k in cv_keywords)
-        job_keywords_lower = set(k.lower() for k in job_keywords)
+        cv_keywords_lower = set(k.lower() for k in (cv_keywords or []))
+        job_keywords_lower = set(k.lower() for k in (job_keywords or []))
         
         if cv_keywords_lower and job_keywords_lower:
             overlap = cv_keywords_lower & job_keywords_lower

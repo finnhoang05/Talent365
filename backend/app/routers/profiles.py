@@ -159,6 +159,81 @@ async def upload_cv(
     }
 
 
+@router.post("/me/membership")
+async def upgrade_membership(user_id: str = Depends(get_current_user_id)):
+    """Upgrade a user's membership (fake payment - just sets is_member=True)."""
+    db = get_supabase()
+    result = db.table("profiles").update({"is_member": True}).eq("id", user_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    return {"message": "Membership activated", "is_member": True}
+
+
+@router.delete("/me/membership")
+async def cancel_membership(user_id: str = Depends(get_current_user_id)):
+    """Cancel membership."""
+    db = get_supabase()
+    db.table("profiles").update({"is_member": False}).eq("id", user_id).execute()
+    return {"message": "Membership cancelled", "is_member": False}
+
+
+@router.get("/search/candidates", response_model=list[ProfileResponse])
+async def search_candidates(
+    q: str | None = None,
+    skills: str | None = None,
+    preferred_mode: str | None = None,
+    preferred_location: str | None = None,
+    limit: int = 50,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Search candidates with fuzzy matching. Employer-only."""
+    from thefuzz import fuzz
+    db = get_supabase()
+
+    # Verify employer
+    profile = db.table("profiles").select("role").eq("id", user_id).execute()
+    if not profile.data or profile.data[0]["role"] != "employer":
+        raise HTTPException(status_code=403, detail="Only employers can search candidates")
+
+    result = db.table("profiles").select("*").eq("role", "candidate").execute()
+    candidates = result.data or []
+
+    if preferred_mode:
+        candidates = [c for c in candidates if c.get("preferred_mode") == preferred_mode]
+    if preferred_location:
+        candidates = [
+            c for c in candidates
+            if c.get("preferred_location") and
+            preferred_location.lower() in c["preferred_location"].lower()
+        ]
+
+    if q:
+        query_lower = q.lower()
+
+        def score(c: dict) -> int:
+            targets = [
+                c.get("full_name") or "",
+                c.get("education") or "",
+                c.get("preferred_location") or "",
+                " ".join(c.get("skills") or []),
+                " ".join(c.get("cv_keywords") or []),
+                # Flatten work_experience text
+                " ".join(
+                    f"{e.get('role','')} {e.get('company','')}"
+                    for e in (c.get("work_experience") or [])
+                ),
+            ]
+            combined = " ".join(targets)
+            return fuzz.partial_ratio(query_lower, combined.lower())
+
+        candidates = [(c, score(c)) for c in candidates]
+        candidates = [(c, s) for c, s in candidates if s >= 40]
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        candidates = [c for c, _ in candidates]
+
+    return candidates[:limit]
+
+
 @router.get("/", response_model=list[ProfileResponse])
 async def list_candidates(
     role: str = "candidate",
@@ -166,7 +241,5 @@ async def list_candidates(
 ):
     """List all profiles (filtered by role)."""
     db = get_supabase()
-    
     result = db.table("profiles").select("*").eq("role", role).limit(limit).execute()
-    
     return result.data or []

@@ -3,6 +3,14 @@ from datetime import datetime
 from typing import Literal
 
 
+class WorkExperience(BaseModel):
+    role: str
+    company: str
+    start_date: str          # e.g. "2022-01"
+    end_date: str | None = None   # None = current
+    description: str | None = None
+
+
 class ProfileBase(BaseModel):
     full_name: str | None = None
     email: EmailStr | None = None
@@ -15,6 +23,9 @@ class ProfileCreate(ProfileBase):
     education: str | None = None
     years_experience: int | None = 0
     skills: list[str] | None = None
+    work_experience: list[WorkExperience] | None = None
+    preferred_mode: Literal["Remote", "Hybrid", "On-site"] | None = None
+    preferred_location: str | None = None
     # Employer fields
     company_name: str | None = None
 
@@ -26,6 +37,9 @@ class ProfileUpdate(BaseModel):
     education: str | None = None
     years_experience: int | None = None
     skills: list[str] | None = None
+    work_experience: list[WorkExperience] | None = None
+    preferred_mode: Literal["Remote", "Hybrid", "On-site"] | None = None
+    preferred_location: str | None = None
     company_name: str | None = None
 
 
@@ -38,7 +52,11 @@ class ProfileResponse(ProfileBase):
     education: str | None = None
     years_experience: int | None = None
     skills: list[str] | None = None
+    work_experience: list[WorkExperience] | None = None
+    preferred_mode: str | None = None
+    preferred_location: str | None = None
     company_name: str | None = None
+    is_member: bool = False
     created_at: datetime
 
     class Config:
